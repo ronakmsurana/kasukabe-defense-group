@@ -17,18 +17,18 @@ breachProtocol.init(io);
 
 const port = 3000;
 
-// --- NEW: Global adapter variable ---
-let adapter;
+// --- NEW: Two adapters ---
+let adapter; // For REAL data
+let honeypotAdapter; // For FAKE data
 
 // -----------------------------------------------------------------
-// NEW: Adapter Loader (copied from planter.js)
+// Updated Adapter Loader (now takes a connection string)
 // -----------------------------------------------------------------
-function getAdapter(dbConfig) {
+function getAdapter(dbConfig, connectionString) {
   const dbType = dbConfig.type.toLowerCase();
-  const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
-    console.error("Error: DATABASE_URL not found in .env file.");
-    process.exit(1);
+    console.error(`Error: Connection string is missing for DB type "${dbType}".`);
+    return null; // Return null instead of exiting
   }
   try {
     const Adapter = require(`./adapters/${dbType}Adapter`);
@@ -39,22 +39,44 @@ function getAdapter(dbConfig) {
   }
 }
 
-// --- NEW: Centralized Honeypot Response ---
-function sendHoneypot(res, ip, reason) {
-  console.log(`[FIREWALL]: 🛑 ${reason}. Denied IP: ${ip}`);
-  // Send a generic error, not an obvious honeypot
-  res.status(403).json({ "message": "Access Forbidden" });
+// -----------------------------------------------------------------
+// NEW: Centralized Honeypot Function
+// -----------------------------------------------------------------
+async function sendHoneypot(req, res, ip, reason) {
+  console.log(`[FIREWALL]: 🛑 ${reason}. Rerouting IP: ${ip} to honeypot.`);
+  
+  // NEW LINE:
+  // Manually parse the target from the URL
+  const urlParts = req.originalUrl.split('/'); // e.g., ['', 'api', 'employees']
+  const targetName = urlParts[2]; // This will be 'employees' or 'products'
+  
+  if (!targetName || !honeypotAdapter) {
+    // Fallback if honeypot isn't working
+    return res.status(200).json([{ "message": "Data retrieved successfully" }]);
+  }
+
+  try {
+    // --- THIS IS THE CORE LOGIC ---
+    // Fetch data from the *honeypot* database instead of the real one
+    const fakeData = await honeypotAdapter.find(targetName);
+    res.status(200).json(fakeData);
+    // ----------------------------
+  } catch (err) {
+    // If honeypot fails (e.g., no 'products' table), send a generic response
+    console.error(`[HONEYPOT]: Error fetching fake data: ${err.message}`);
+    res.status(200).json([{ "id": "fake-001", "status": "ok" }]);
+  }
   return;
 }
 
 // -----------------------------------------------------------------
-// STEP 4: THE HONEYPOT FIREWALL (No change)
+// STEP 4: THE HONEYPOT FIREWALL (Updated)
 // -----------------------------------------------------------------
 const honeypotFirewall = (req, res, next) => {
   if (breachProtocol.ipBlacklist.has(req.ip)) {
-    console.log(`[FIREWALL]: 🛑 Denied blacklisted IP: ${req.ip}`);
-    res.status(200).json({ "message": "Access denied" }); // Simple honeypot
-    return;
+    // Call the new honeypot function
+    sendHoneypot(req, res, req.ip, "Blacklisted IP");
+    return; // Stop the request
   }
   next();
 };
@@ -105,49 +127,41 @@ const checkData = async (data, requestInfo) => {
 };
 
 // -----------------------------------------------------------------
-// STEP 1: THE INTERCEPTOR MIDDLEWARE (No change)
+// STEP 1: THE INTERCEPTOR MIDDLEWARE (Updated)
 // -----------------------------------------------------------------
 const decoyInterceptor = (req, res, next) => {
-  // ... (This function is identical to before) ...
-  // --- NEW BYPASS LOGIC ---
   const bypassHeader = req.headers['x-admin-bypass'];
   if (ADMIN_BYPASS_KEY && bypassHeader === ADMIN_BYPASS_KEY) {
-    // This is a trusted admin. Skip ALL decoy logic.
     return next();
   }
-  const originalSend = res.send.bind(res);
-  res.send = (body) => {
-    // --- NEW: HEURISTIC CHECK (Synchronous) ---
-    // Check the size of the response body *before* sending.
-    if (body && body.length > MAX_DATA_BYTES) {
-      console.warn(`[HEURISTIC]: Large data request detected from IP: ${req.ip}. Size: ${body.length} bytes.`);
-      
-      const requestInfo = {
-        ip: req.ip,
-        url: req.originalUrl,
-        method: req.method,
-      };
 
-      // 1. Trigger alert and blacklist (pass 'null' for decoy)
+  const originalSend = res.send.bind(res);
+
+  res.send = (body) => {
+    // --- HEURISTIC CHECK (Updated) ---
+    if (body && body.length > MAX_DATA_BYTES) {
+      console.warn(`[HEURISTIC]: Large data request detected from IP: ${req.ip}.`);
+      
+      const requestInfo = { ip: req.ip, url: req.originalUrl, method: req.method };
       breachProtocol.triggerAlert(requestInfo, null); 
       
-      // 2. Send honeypot *instead* of the real data
-      sendHoneypot(res, req.ip, "Large data request");
-      return; // Stop here! Do not send the data.
+      // Call the new honeypot function
+      sendHoneypot(req, res, req.ip, "Large data request");
+      return; // Stop here!
     }
     // --- END HEURISTIC CHECK ---
 
-    // If check passed, send data and check HMAC asynchronously
     originalSend(body);
+    
     try {
       const requestInfo = { ip: req.ip, url: req.originalUrl, method: req.method };
       const data = JSON.parse(body);
-      checkData(data, requestInfo);
+      checkData(data, requestInfo); // Async HMAC check
     } catch (e) { /* Not JSON, skip */ }
   };
+
   next();
 };
-// Apply the interceptor to ALL /api routes
 app.use('/api', decoyInterceptor);
 
 // -----------------------------------------------------------------
@@ -189,27 +203,27 @@ app.get('/dashboard', (req, res) => {
 // -----------------------------------------------------------------
 async function startServer() {
   try {
-    // --- NEW: Use the adapter to connect ---
-    adapter = getAdapter(userConfig.database);
+    // --- NEW: Connect to both databases ---
+    adapter = getAdapter(userConfig.database, process.env.DATABASE_URL);
+    honeypotAdapter = getAdapter(userConfig.database, process.env.HONEYPOT_DATABASE_URL);
+    
+    if (!adapter || !honeypotAdapter) {
+      throw new Error("Missing database connection strings in .env file.");
+    }
+    
     await adapter.connect();
-    console.log(`Successfully connected to ${userConfig.database.type} database.`);
+    console.log(`✅ Successfully connected to REAL ${userConfig.database.type} database.`);
+    
+    await honeypotAdapter.connect();
+    console.log(`🍯 Successfully connected to HONEYPOT ${userConfig.database.type} database.`);
     // ------------------------------------
 
-    // Start the Express server
     server.listen(port, () => {
       console.log(`Test server running at http://localhost:${port}`);
-      console.log('---');
-      console.log(`➡️  LIVE DASHBOARD: http://localhost:${port}/dashboard`);
-      console.log('---');
-      console.log('➡️  Test a REAL attack on your configured targets:');
-      const targets = userConfig.collections || userConfig.tables || [];
-      targets.forEach(t => {
-        console.log(`   http://localhost:${port}/api/${t.name}`);
-      });
-      console.log('---');
+      // ... (rest of log messages) ...
     });
   } catch (err) {
-    console.error("Failed to connect to database or start server.", err);
+    console.error("Failed to connect to databases or start server.", err);
     process.exit(1);
   }
 }
