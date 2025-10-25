@@ -12,6 +12,16 @@
         "jobTitle": "person.jobTitle",
         "department": "commerce.department"
       }
+    },
+    {
+      "name": "products",
+      "fields": {
+        "productName": "commerce.productName",
+        "category": "commerce.department",
+        "unitPrice": "number.float",
+        "manufacturer": "company.companyName",
+        "sku": "string.alphanumeric"
+      }
     }
   ]
 }
