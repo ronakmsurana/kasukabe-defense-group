@@ -1,0 +1,19 @@
+{
+  "heuristics": {
+    "maxDataBytes": 10
+  },
+  "countPerTarget": 5,
+  "fakerMap": {
+    "string": "lorem.words",
+    "email": "internet.email",
+    "date": "date.past",
+    "number": "datatype.number",
+    "boolean": "datatype.boolean",
+    "uuid": "string.uuid"
+  },
+  "strategy": {
+    "identifierField": "unique_id",
+    "hmacField": "data_code",
+    "identifierType": "string.uuid"
+  }
+}

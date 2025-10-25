@@ -1,0 +1,27 @@
+{
+  "database": {
+    "type": "mongo"
+  },
+  "collections": [
+    {
+      "name": "employees",
+      "fields": {
+        "firstName": "person.firstName",
+        "lastName": "person.lastName",
+        "email": "internet.email",
+        "jobTitle": "person.jobTitle",
+        "department": "commerce.department"
+      }
+    },
+    {
+      "name": "products",
+      "fields": {
+        "productName": "commerce.productName",
+        "category": "commerce.department",
+        "unitPrice": "commerce.price",
+        "manufacturer": "company.name",
+        "sku": "string.alphanumeric"
+      }
+    }
+  ]
+}
