@@ -32,6 +32,18 @@ const triggerAlert = (requestInfo, decoyRecord) => {
     timestamp: new Date().toISOString(),
     stolenData: decoyRecord
   };
+  
+  // --- NEW: Check if this was an HMAC or Heuristic breach ---
+  if (decoyRecord) {
+    console.error('Type: Decoy HMAC match');
+    console.error('Data Stolen:');
+    console.warn(JSON.stringify(decoyRecord, null, 2));
+  } else {
+    // This is a heuristic breach
+    console.error('Type: Heuristic violation (e.g., large data request)');
+    alertDetails.stolenData = { "error": "Heuristic violation, data not sent." };
+  }
+  // ---------------------------------------------------------
 
   // --- NEW: Emit the event to the dashboard ---
   if (io) {

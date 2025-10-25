@@ -1,4 +1,7 @@
 {
+  "heuristics": {
+    "maxDataBytes": 10
+  },
   "countPerTarget": 5,
   "fakerMap": {
     "string": "lorem.words",

@@ -1,3 +1,4 @@
+//version of server.js which test for all data requets
 require('dotenv').config();
 const express = require('express');
 const crypto = require('crypto');

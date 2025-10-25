@@ -39,6 +39,14 @@ function getAdapter(dbConfig) {
   }
 }
 
+// --- NEW: Centralized Honeypot Response ---
+function sendHoneypot(res, ip, reason) {
+  console.log(`[FIREWALL]: 🛑 ${reason}. Denied IP: ${ip}`);
+  // Send a generic error, not an obvious honeypot
+  res.status(403).json({ "message": "Access Forbidden" });
+  return;
+}
+
 // -----------------------------------------------------------------
 // STEP 4: THE HONEYPOT FIREWALL (No change)
 // -----------------------------------------------------------------
@@ -56,11 +64,16 @@ app.use(honeypotFirewall);
 // Load Secrets & Config (No change)
 // -----------------------------------------------------------------
 const DECOY_KEY = process.env.DECOY_SECRET_KEY;
+const ADMIN_BYPASS_KEY = process.env.ADMIN_BYPASS_KEY;
 const { identifierField, hmacField } = logicConfig.strategy;
 if (!DECOY_KEY || !identifierField || !hmacField) {
   console.error("Error: Missing keys or strategy in config/env.");
   process.exit(1);
 }
+
+// --- NEW: Load Heuristics ---
+// Default to 5MB if not set
+const MAX_DATA_BYTES = logicConfig.heuristics?.maxDataBytes || 5242880;
 
 // -----------------------------------------------------------------
 // HMAC HELPER FUNCTION (No change)
@@ -96,8 +109,35 @@ const checkData = async (data, requestInfo) => {
 // -----------------------------------------------------------------
 const decoyInterceptor = (req, res, next) => {
   // ... (This function is identical to before) ...
+  // --- NEW BYPASS LOGIC ---
+  const bypassHeader = req.headers['x-admin-bypass'];
+  if (ADMIN_BYPASS_KEY && bypassHeader === ADMIN_BYPASS_KEY) {
+    // This is a trusted admin. Skip ALL decoy logic.
+    return next();
+  }
   const originalSend = res.send.bind(res);
   res.send = (body) => {
+    // --- NEW: HEURISTIC CHECK (Synchronous) ---
+    // Check the size of the response body *before* sending.
+    if (body && body.length > MAX_DATA_BYTES) {
+      console.warn(`[HEURISTIC]: Large data request detected from IP: ${req.ip}. Size: ${body.length} bytes.`);
+      
+      const requestInfo = {
+        ip: req.ip,
+        url: req.originalUrl,
+        method: req.method,
+      };
+
+      // 1. Trigger alert and blacklist (pass 'null' for decoy)
+      breachProtocol.triggerAlert(requestInfo, null); 
+      
+      // 2. Send honeypot *instead* of the real data
+      sendHoneypot(res, req.ip, "Large data request");
+      return; // Stop here! Do not send the data.
+    }
+    // --- END HEURISTIC CHECK ---
+
+    // If check passed, send data and check HMAC asynchronously
     originalSend(body);
     try {
       const requestInfo = { ip: req.ip, url: req.originalUrl, method: req.method };
