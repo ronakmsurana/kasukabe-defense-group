@@ -10,7 +10,7 @@ export function createJail(adapter) {
   };
 
   const jailRouter = (req, res, next) => {
-    // Note: req.ip might need proxy configuration in a real app
+    //  req.ip might need proxy configuration in a real app
     const ip = req.ip; 
     
     if (jailedIPs.has(ip)) {
