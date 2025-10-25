@@ -14,7 +14,6 @@ const EmployeeSchema = new mongoose.Schema({
 });
 
 // 1. Create Connections
-// These will now work because process.env is loaded
 const conn_real = mongoose.createConnection(process.env.MONGO_URI_REAL); 
 const conn_fake = mongoose.createConnection(process.env.MONGO_URI_FAKE);
 
