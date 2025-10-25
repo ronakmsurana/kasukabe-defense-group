@@ -84,5 +84,12 @@ async ensureColumns(tableName, strategy) {
     const result = await collection.bulkWrite(bulkOps);
     return result.modifiedCount;
   }
+
+  async find(collectionName) {
+    if (!this.db) {
+      throw new Error("Not connected to the database. Call connect() first.");
+    }
+    return this.db.collection(collectionName).find({}).toArray();
+  }
 }
 module.exports = MongoAdapter;

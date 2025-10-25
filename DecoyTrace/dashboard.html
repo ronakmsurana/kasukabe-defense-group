@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DecoyTrace | Live Dashboard</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #121212;
+            color: #e0e0e0;
+            margin: 0;
+            padding: 24px;
+        }
+        h1 {
+            color: #ffffff;
+            border-bottom: 2px solid #333;
+            padding-bottom: 10px;
+        }
+        h1 span {
+            color: #e03f3f;
+        }
+        #alert-feed {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        .alert {
+            background-color: #2a2a2a;
+            border: 1px solid #e03f3f;
+            border-radius: 8px;
+            padding: 16px;
+            box-shadow: 0 4px 12px rgba(224, 63, 63, 0.1);
+            animation: fadeIn 0.5s ease;
+        }
+        .alert-header {
+            color: #e03f3f;
+            font-size: 1.2rem;
+            font-weight: 600;
+            margin: 0 0 12px 0;
+        }
+        .alert-details {
+            font-size: 0.9rem;
+            line-height: 1.6;
+        }
+        .alert-details strong {
+            color: #ccc;
+            min-width: 100px;
+            display: inline-block;
+        }
+        pre {
+            background-color: #1a1a1a;
+            padding: 12px;
+            border-radius: 4px;
+            overflow-x: auto;
+            color: #f1f1f1;
+            font-family: "Courier New", Courier, monospace;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body>
+
+    <h1>DecoyTrace <span>Live Breach Feed</span></h1>
+    
+    <div id="alert-feed">
+        </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+
+    <script>
+        const alertFeed = document.getElementById('alert-feed');
+        
+        // Connect to the WebSocket server
+        const socket = io();
+
+        // Listen for the 'breach' event from the server
+        socket.on('breach', (data) => {
+            console.log('Breach detected!', data);
+            
+            // Create the new alert HTML element
+            const alertElement = document.createElement('div');
+            alertElement.className = 'alert';
+            
+            alertElement.innerHTML = `
+                <div class="alert-header">🚨 NEW BREACH DETECTED</div>
+                <div class="alert-details">
+                    <div><strong>IP Address:</strong> ${data.ip}</div>
+                    <div><strong>Request:</strong> ${data.method} ${data.url}</div>
+                    <div><strong>Timestamp:</strong> ${new Date(data.timestamp).toLocaleString()}</div>
+                    <br>
+                    <strong>Stolen Data:</strong>
+                    <pre>${JSON.stringify(data.stolenData, null, 2)}</pre>
+                </div>
+            `;
+            
+            // Add the new alert to the top of the feed
+            alertFeed.prepend(alertElement);
+        });
+    </script>
+</body>
+</html>

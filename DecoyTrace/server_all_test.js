@@ -1,43 +1,23 @@
 require('dotenv').config();
 const express = require('express');
 const crypto = require('crypto');
-const path = require('path');
-const http = require('http');
-const { Server } = require("socket.io");
-
-// --- NEW: Load all configs and adapter ---
+const { MongoClient } = require('mongodb'); // <-- NEW: Import the real MongoDB client
 const logicConfig = require('./decoy_config.json');
-const userConfig = require('./user_config.json'); // <-- NEW
 const breachProtocol = require('./breachProtocol');
 
 const app = express();
-const server = http.createServer(app);
-const io = new Server(server);
-breachProtocol.init(io);
-
 const port = 3000;
 
-// --- NEW: Global adapter variable ---
-let adapter;
-
 // -----------------------------------------------------------------
-// NEW: Adapter Loader (copied from planter.js)
+// Database Connection
 // -----------------------------------------------------------------
-function getAdapter(dbConfig) {
-  const dbType = dbConfig.type.toLowerCase();
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) {
-    console.error("Error: DATABASE_URL not found in .env file.");
-    process.exit(1);
-  }
-  try {
-    const Adapter = require(`./adapters/${dbType}Adapter`);
-    return new Adapter(connectionString);
-  } catch (error) {
-    console.error(`Error: Could not load adapter for database type "${dbType}".`);
-    process.exit(1);
-  }
+const DATABASE_URL = process.env.DATABASE_URL;
+if (!DATABASE_URL) {
+  console.error("Error: DATABASE_URL not found in .env file.");
+  process.exit(1);
 }
+const client = new MongoClient(DATABASE_URL);
+let employeesCollection; // This will hold our connection
 
 // -----------------------------------------------------------------
 // STEP 4: THE HONEYPOT FIREWALL (No change)
@@ -45,7 +25,13 @@ function getAdapter(dbConfig) {
 const honeypotFirewall = (req, res, next) => {
   if (breachProtocol.ipBlacklist.has(req.ip)) {
     console.log(`[FIREWALL]: 🛑 Denied blacklisted IP: ${req.ip}`);
-    res.status(200).json({ "message": "Access denied" }); // Simple honeypot
+    res.status(200).json({
+      "data": [
+        { "id": "emp-fake-101", "name": "Alice Anderson", "status": "Active" },
+        { "id": "emp-fake-102", "name": "Bob Brown", "status": "Active" }
+      ],
+      "message": "Data retrieved successfully."
+    });
     return;
   }
   next();
@@ -57,6 +43,7 @@ app.use(honeypotFirewall);
 // -----------------------------------------------------------------
 const DECOY_KEY = process.env.DECOY_SECRET_KEY;
 const { identifierField, hmacField } = logicConfig.strategy;
+// ... (rest of config loading is the same) ...
 if (!DECOY_KEY || !identifierField || !hmacField) {
   console.error("Error: Missing keys or strategy in config/env.");
   process.exit(1);
@@ -73,16 +60,20 @@ function createHmac(data, key) {
 // STEP 2: ASYNCHRONOUS HMAC CHECK (No change)
 // -----------------------------------------------------------------
 const checkData = async (data, requestInfo) => {
-  // ... (This function is identical to before) ...
   let records = [];
-  if (Array.isArray(data)) records = data;
-  else if (typeof data === 'object' && data !== null) records = [data];
+  if (Array.isArray(data)) {
+    records = data;
+  } else if (typeof data === 'object' && data !== null) {
+    records = [data];
+  }
   if (records.length === 0) return;
+
   for (const record of records) {
     if (record && record[identifierField] && record[hmacField]) {
       const uniqueId = record[identifierField];
       const dataCode = record[hmacField];
       const testHash = createHmac(uniqueId, DECOY_KEY);
+
       if (testHash === dataCode) {
         breachProtocol.triggerAlert(requestInfo, record);
         return;
@@ -95,53 +86,41 @@ const checkData = async (data, requestInfo) => {
 // STEP 1: THE INTERCEPTOR MIDDLEWARE (No change)
 // -----------------------------------------------------------------
 const decoyInterceptor = (req, res, next) => {
-  // ... (This function is identical to before) ...
   const originalSend = res.send.bind(res);
   res.send = (body) => {
     originalSend(body);
     try {
-      const requestInfo = { ip: req.ip, url: req.originalUrl, method: req.method };
+      const requestInfo = {
+        ip: req.ip,
+        url: req.originalUrl,
+        method: req.method,
+      };
       const data = JSON.parse(body);
       checkData(data, requestInfo);
     } catch (e) { /* Not JSON, skip */ }
   };
   next();
 };
-// Apply the interceptor to ALL /api routes
 app.use('/api', decoyInterceptor);
 
 // -----------------------------------------------------------------
-// LIVE API ROUTES (Now 100% Dynamic)
+// LIVE API ROUTES
 // -----------------------------------------------------------------
 
-// This single route handles ALL tables/collections from your config
-app.get('/api/:target', async (req, res) => {
-  const targetName = req.params.target;
-  
-  if (!adapter) {
+// This route simulates an attacker stealing ALL data
+app.get('/api/employees', async (req, res) => {
+  if (!employeesCollection) {
     return res.status(500).json({ error: "Database not connected" });
   }
 
-  console.log(`\n[APP]: Request for ALL "${targetName}". Fetching from LIVE database...`);
+  console.log('\n[APP]: Request for ALL employees. Fetching from LIVE database...');
   
-  try {
-    // --- THIS IS THE CORE CHANGE ---
-    // We call the generic 'find' method on our adapter
-    const data = await adapter.find(targetName);
-    // -----------------------------
-    
-    res.json(data);
-    console.log('[APP]: Data sent to user.');
+  // THIS IS THE ONLY CHANGE:
+  // We now call the REAL database, not getMockEmployees
+  const employees = await employeesCollection.find({}).toArray();
   
-  } catch (err) {
-    console.error(`[APP]: Error fetching data for target "${targetName}":`, err.message);
-    res.status(500).json({ error: "Failed to fetch data." });
-  }
-});
-
-// Route for the dashboard HTML
-app.get('/dashboard', (req, res) => {
-  res.sendFile(path.join(__dirname, 'dashboard.html'));
+  res.json(employees);
+  console.log('[APP]: Data sent to user.');
 });
 
 // -----------------------------------------------------------------
@@ -149,23 +128,21 @@ app.get('/dashboard', (req, res) => {
 // -----------------------------------------------------------------
 async function startServer() {
   try {
-    // --- NEW: Use the adapter to connect ---
-    adapter = getAdapter(userConfig.database);
-    await adapter.connect();
-    console.log(`Successfully connected to ${userConfig.database.type} database.`);
-    // ------------------------------------
+    // Connect to MongoDB Atlas
+    await client.connect();
+    // Get the database and collection from your user_config.json
+    // Make sure these names are correct!
+    const db = client.db('db_real'); 
+    employeesCollection = db.collection('employees'); 
+
+    console.log("Successfully connected to MongoDB Atlas.");
 
     // Start the Express server
-    server.listen(port, () => {
+    app.listen(port, () => {
       console.log(`Test server running at http://localhost:${port}`);
       console.log('---');
-      console.log(`➡️  LIVE DASHBOARD: http://localhost:${port}/dashboard`);
-      console.log('---');
-      console.log('➡️  Test a REAL attack on your configured targets:');
-      const targets = userConfig.collections || userConfig.tables || [];
-      targets.forEach(t => {
-        console.log(`   http://localhost:${port}/api/${t.name}`);
-      });
+      console.log('Test the REAL attack: http://localhost:3000/api/employees');
+      console.log('Then, REFRESH the page to test the honeypot.');
       console.log('---');
     });
   } catch (err) {

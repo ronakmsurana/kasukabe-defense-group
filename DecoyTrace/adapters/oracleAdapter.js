@@ -105,5 +105,14 @@ async ensureColumns(tableName, strategy) {
     }
     return updateCount;
   }
+
+  async find(tableName) {
+    if (!this.connection) throw new Error("Not connected.");
+
+    const query = `SELECT * FROM "${tableName}"`;
+    // Add outFormat to get objects instead of arrays
+    const res = await this.connection.execute(query, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
+    return res.rows;
+  }
 }
 module.exports = OracleAdapter;

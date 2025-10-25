@@ -115,5 +115,13 @@ class MySqlAdapter {
     }
     return updateCount;
   }
+
+  async find(tableName) {
+    if (!this.connection) throw new Error("Not connected.");
+
+    const query = `SELECT * FROM \`${tableName}\``;
+    const [rows] = await this.connection.query(query);
+    return rows;
+  }
 }
 module.exports = MySqlAdapter;

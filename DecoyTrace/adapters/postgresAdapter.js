@@ -116,5 +116,13 @@ class PostgresAdapter {
     }
     return updateCount;
   }
+
+  async find(tableName) {
+    if (!this.client) throw new Error("Not connected.");
+    
+    const query = `SELECT * FROM ${JSON.stringify(tableName)}`;
+    const res = await this.client.query(query);
+    return res.rows;
+  }
 }
 module.exports = PostgresAdapter;

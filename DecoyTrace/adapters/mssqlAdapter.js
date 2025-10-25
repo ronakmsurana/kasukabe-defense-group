@@ -121,6 +121,13 @@ class MssqlAdapter {
       console.log("MS SQL Server connection closed.");
     }
   }
+  async find(tableName) {
+    if (!this.pool) throw new Error("Not connected.");
+
+    const query = `SELECT * FROM [${tableName}]`;
+    const res = await this.pool.request().query(query);
+    return res.recordset;
+  }
 }
 
 module.exports = MssqlAdapter;

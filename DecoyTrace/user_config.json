@@ -18,8 +18,8 @@
       "fields": {
         "productName": "commerce.productName",
         "category": "commerce.department",
-        "unitPrice": "number.float",
-        "manufacturer": "company.companyName",
+        "unitPrice": "commerce.price",
+        "manufacturer": "company.name",
         "sku": "string.alphanumeric"
       }
     }
