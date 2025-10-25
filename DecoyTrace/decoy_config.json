@@ -1,0 +1,16 @@
+{
+  "countPerTarget": 50,
+  "fakerMap": {
+    "string": "lorem.words",
+    "email": "internet.email",
+    "date": "date.past",
+    "number": "datatype.number",
+    "boolean": "datatype.boolean",
+    "uuid": "datatype.uuid"
+  },
+  "strategy": {
+    "identifierField": "unique_id",
+    "hmacField": "data_code",
+    "identifierType": "string.uuid" 
+  }
+}

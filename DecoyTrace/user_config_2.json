@@ -1,0 +1,23 @@
+{
+  "database": {
+    "type": "mysql" 
+  },
+  "collections": [
+    {
+      "name": "users",
+      "primaryKey": "id", 
+      "fields": {
+        "fullName": "string",
+        "email": "email"
+      }
+    },
+    {
+      "name": "products",
+      "primaryKey": "product_id", 
+      "fields": {
+        "product_name": "string",
+        "price": "number"
+      }
+    }
+  ]
+}

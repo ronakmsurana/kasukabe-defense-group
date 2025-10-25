@@ -1,0 +1,18 @@
+{
+  "database": {
+    "type": "mongo"
+  },
+  "collections": [
+    {
+      "name": "employees",
+      "fields": {
+        "firstName": "name.firstName",
+        "lastName": "name.lastName",
+        "email": "internet.email",
+        "jobTitle": "name.jobTitle",
+        "department": "commerce.department",
+        "is_decoy": "datatype.boolean"
+      }
+    }
+  ]
+}
