@@ -1,0 +1,39 @@
+// backend/adapters/MySqlAdapter.js
+import mysql from 'mysql2/promise';
+
+// 1. Create Connection Pools
+const pool_real = mysql.createPool(process.env.MYSQL_URI_REAL);
+const pool_fake = mysql.createPool(process.env.MYSQL_URI_FAKE);
+
+// 2. The "Adapter" Interface
+export const MySqlAdapter = {
+  decoyIdSet: new Set(),
+  
+  loadDecoys: async function() {
+    const [rows] = await pool_real.query('SELECT id FROM employees WHERE is_decoy = 1');
+    rows.forEach(row => this.decoyIdSet.add(row.id.toString()));
+    console.log(`[MySQL] Loaded ${this.decoyIdSet.size} decoys.`);
+  },
+
+  real: {
+    getAllEmployees: async () => {
+      const [rows] = await pool_real.query('SELECT * FROM employees WHERE is_decoy = 0');
+      return rows;
+    },
+    getEmployeeById: async (id) => {
+      const [rows] = await pool_real.query('SELECT * FROM employees WHERE id = ? AND is_decoy = 0', [id]);
+      return rows[0] || null;
+    }
+  },
+
+  fake: {
+    getAllEmployees: async () => {
+      const [rows] = await pool_fake.query('SELECT * FROM employees');
+      return rows;
+    },
+    getEmployeeById: async (id) => {
+      const [rows] = await pool_fake.query('SELECT * FROM employees WHERE id = ?', [id]);
+      return rows[0] || null;
+    }
+  }
+};

@@ -1,0 +1,60 @@
+// backend/adapters/MongoAdapter.js
+import 'dotenv/config';
+import mongoose from 'mongoose';
+
+// Define the schema *inside* the adapter
+const EmployeeSchema = new mongoose.Schema({
+  // ... (your schema)
+  firstName: String,
+  lastName: String,
+  email: String,
+  jobTitle: String,
+  department: String,
+  is_decoy: { type: Boolean, default: false }
+});
+
+// 1. Create Connections
+// These will now work because process.env is loaded
+const conn_real = mongoose.createConnection(process.env.MONGO_URI_REAL); 
+const conn_fake = mongoose.createConnection(process.env.MONGO_URI_FAKE);
+
+// 2. Create Models
+const Employee_Real = conn_real.model('Employee', EmployeeSchema);
+const Employee_Fake = conn_fake.model('Employee', EmployeeSchema);
+
+// 3. The "Adapter" Interface
+export const MongoAdapter = {
+  decoyIdSet: new Set(),
+  
+  loadDecoys: async function() {
+    const decoys = await Employee_Real.find({ is_decoy: true });
+    decoys.forEach(decoy => this.decoyIdSet.add(decoy._id.toString()));
+    console.log(`[Mongo] Loaded ${this.decoyIdSet.size} decoys.`);
+  },
+
+  real: {
+    getAllEmployees: async () => {
+      return Employee_Real.find({ is_decoy: { $ne: true } });
+    },
+    getEmployeeById: async (id) => {
+      // Check for valid ID to prevent Mongoose CastError
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        return null; 
+      }
+      return Employee_Real.findById(id).where({ is_decoy: { $ne: true } });
+    }
+  },
+
+  fake: {
+    getAllEmployees: async () => {
+      return Employee_Fake.find({});
+    },
+    getEmployeeById: async (id) => {
+      // Check for valid ID
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        return null; 
+      }
+      return Employee_Fake.findById(id);
+    }
+  }
+};
