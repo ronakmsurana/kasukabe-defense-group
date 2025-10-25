@@ -19,8 +19,7 @@
         "productName": "commerce.productName",
         "category": "commerce.department",
         "unitPrice": "commerce.price",
-        "manufacturer": "company.name",
-        "sku": "string.alphanumeric"
+        "manufacturer": "company.name"
       }
     }
   ]
