@@ -1,7 +1,8 @@
+const fs= require('fs');
 require('dotenv').config();
 const { faker } = require('@faker-js/faker');
 const crypto = require('crypto');
-const userConfig = require('./user_config/schema.json');
+const userConfig = require('./user_config.json');
 const logicConfig = require('./decoy_config.json');
 
 // --- HMAC Helper ---
