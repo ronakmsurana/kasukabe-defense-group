@@ -1,6 +1,6 @@
 {
   "heuristics": {
-    "maxDataBytes": 25000
+    "maxDataBytes": 2500
   },
   "countPerTarget": 5,
   "fakerMap": {
