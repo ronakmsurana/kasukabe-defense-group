@@ -1,8 +1,10 @@
 {
   "heuristics": {
-    "maxDataBytes": 2500
+    "maxDataBytes": 25000
   },
-  "countPerTarget": 5,
+  "whitelist": {
+    "roles": ["admin", "manager", "service_account"]
+  },
   "fakerMap": {
     "string": "lorem.words",
     "email": "internet.email",
