@@ -27,18 +27,31 @@
         }
         .alert {
             background-color: #2a2a2a;
-            border: 1px solid #e03f3f;
             border-radius: 8px;
             padding: 16px;
-            box-shadow: 0 4px 12px rgba(224, 63, 63, 0.1);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
             animation: fadeIn 0.5s ease;
+            border: 1px solid #444; /* Default border */
         }
+        
+        /* NEW: High threat (red) style */
+        .alert-high {
+            border-color: #e03f3f;
+            box-shadow: 0 4px 12px rgba(224, 63, 63, 0.1);
+        }
+        /* NEW: Low threat (yellow) style */
+        .alert-low {
+            border-color: #e0b83f;
+            box-shadow: 0 4px 12px rgba(224, 184, 63, 0.1);
+        }
+
         .alert-header {
-            color: #e03f3f;
             font-size: 1.2rem;
             font-weight: 600;
             margin: 0 0 12px 0;
         }
+        .alert-high .alert-header { color: #e03f3f; }
+        .alert-low .alert-header { color: #e0b83f; }
         .alert-details {
             font-size: 0.9rem;
             line-height: 1.6;
@@ -83,17 +96,24 @@
             
             // Create the new alert HTML element
             const alertElement = document.createElement('div');
-            alertElement.className = 'alert';
+            // --- NEW: Add CSS class based on threat level ---
+            alertElement.className = `alert alert-${data.threatLevel || 'high'}`;
+            
+            // --- NEW: Change header based on threat level ---
+            let headerText = '🚨 NEW BREACH DETECTED';
+            if (data.threatLevel === 'low') {
+                headerText = '🔶 ADMIN BYPASS (AUDIT)';
+            }
             
             alertElement.innerHTML = `
-                <div class="alert-header">🚨 NEW BREACH DETECTED</div>
+                <div class="alert-header">${headerText}</div>
                 <div class="alert-details">
                     <div><strong>IP Address:</strong> ${data.ip}</div>
                     <div><strong>Request:</strong> ${data.method} ${data.url}</div>
                     <div><strong>Timestamp:</strong> ${new Date(data.timestamp).toLocaleString()}</div>
                     <br>
-                    <strong>Stolen Data:</strong>
-                    <pre>${JSON.stringify(data.stolenData, null, 2)}</pre>
+                    <strong>Details:</strong>
+                    <pre>${JSON.stringify(data.stolenData || 'Bypass request', null, 2)}</pre>
                 </div>
             `;
             

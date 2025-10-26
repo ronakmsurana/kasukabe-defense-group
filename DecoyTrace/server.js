@@ -5,6 +5,7 @@ const path = require('path');
 const http = require('http');
 const { Server } = require("socket.io");
 
+
 // --- NEW: Load all configs and adapter ---
 const logicConfig = require('./decoy_config.json');
 const userConfig = require('./user_config.json'); // <-- NEW
@@ -20,6 +21,10 @@ const port = 3000;
 // --- NEW: Two adapters ---
 let adapter; // For REAL data
 let honeypotAdapter; // For FAKE data
+
+// --- NEW: Add the express.json() middleware ---
+// This is required. It parses incoming JSON into req.body.
+app.use(express.json());
 
 // -----------------------------------------------------------------
 // Updated Adapter Loader (now takes a connection string)
@@ -42,7 +47,7 @@ function getAdapter(dbConfig, connectionString) {
 // -----------------------------------------------------------------
 // NEW: Centralized Honeypot Function
 // -----------------------------------------------------------------
-async function sendHoneypot(req, res, ip, reason) {
+async function sendHoneypot(req, res, ip, reason, sendFunction = null) {
   console.log(`[FIREWALL]: 🛑 ${reason}. Rerouting IP: ${ip} to honeypot.`);
   
   // NEW LINE:
@@ -51,20 +56,32 @@ async function sendHoneypot(req, res, ip, reason) {
   const targetName = urlParts[2]; // This will be 'employees' or 'products'
   
   if (!targetName || !honeypotAdapter) {
-    // Fallback if honeypot isn't working
-    return res.status(200).json([{ "message": "Data retrieved successfully" }]);
+    const payload = JSON.stringify([{ "message": "Data retrieved successfully" }]);
+    if (sendFunction) sendFunction(payload);
+    else res.status(200).json(JSON.parse(payload));
+    return;
   }
 
   try {
     // --- THIS IS THE CORE LOGIC ---
     // Fetch data from the *honeypot* database instead of the real one
     const fakeData = await honeypotAdapter.find(targetName);
-    res.status(200).json(fakeData);
-    // ----------------------------
+    const payload = JSON.stringify(fakeData);
+    // --- NEW LOGIC ---
+    if (sendFunction) {
+      // If called from the interceptor, use the original send
+      res.status(200); // Set status manually
+      sendFunction(payload);
+    } else {
+      // If called from the firewall, use the normal res.json
+      res.status(200).json(fakeData);
+    }
+    // -----------------
   } catch (err) {
-    // If honeypot fails (e.g., no 'products' table), send a generic response
     console.error(`[HONEYPOT]: Error fetching fake data: ${err.message}`);
-    res.status(200).json([{ "id": "fake-001", "status": "ok" }]);
+    const payload = JSON.stringify([{ "id": "fake-001", "status": "ok" }]);
+    if (sendFunction) sendFunction(payload);
+    else res.status(200).json(JSON.parse(payload));
   }
   return;
 }
@@ -86,10 +103,12 @@ app.use(honeypotFirewall);
 // Load Secrets & Config (No change)
 // -----------------------------------------------------------------
 const DECOY_KEY = process.env.DECOY_SECRET_KEY;
+const REAL_KEY = process.env.REAL_SECRET_KEY;
 const ADMIN_BYPASS_KEY = process.env.ADMIN_BYPASS_KEY;
-const { identifierField, hmacField } = logicConfig.strategy;
-if (!DECOY_KEY || !identifierField || !hmacField) {
-  console.error("Error: Missing keys or strategy in config/env.");
+const { identifierField, hmacField, identifierType } = logicConfig.strategy;
+const FAKER_MAP = logicConfig.fakerMap;
+if (!DECOY_KEY || !identifierField || !hmacField || !REAL_KEY) {
+  console.error("Error: Missing keys or strategy in config or env.");
   process.exit(1);
 }
 
@@ -98,66 +117,169 @@ if (!DECOY_KEY || !identifierField || !hmacField) {
 const MAX_DATA_BYTES = logicConfig.heuristics?.maxDataBytes || 5242880;
 
 // -----------------------------------------------------------------
-// HMAC HELPER FUNCTION (No change)
+// HMAC HELPER & FAKER HELPER
 // -----------------------------------------------------------------
 function createHmac(data, key) {
   return crypto.createHmac('sha256', key).update(data.toString()).digest('hex');
 }
-
-// -----------------------------------------------------------------
-// STEP 2: ASYNCHRONOUS HMAC CHECK (No change)
-// -----------------------------------------------------------------
-const checkData = async (data, requestInfo) => {
-  // ... (This function is identical to before) ...
-  let records = [];
-  if (Array.isArray(data)) records = data;
-  else if (typeof data === 'object' && data !== null) records = [data];
-  if (records.length === 0) return;
-  for (const record of records) {
-    if (record && record[identifierField] && record[hmacField]) {
-      const uniqueId = record[identifierField];
-      const dataCode = record[hmacField];
-      const testHash = createHmac(uniqueId, DECOY_KEY);
-      if (testHash === dataCode) {
-        breachProtocol.triggerAlert(requestInfo, record);
-        return;
-      }
-    }
+// We need faker to generate the new unique_id
+const { faker } = require('@faker-js/faker'); 
+function getFakerMethod(methodString, fakerMap) {
+  // ... (copy this function from planter.js)
+  let [category, method] = methodString.split('.');
+  if (faker[category] && faker[category][method]) return faker[category][method];
+  const fakerMethodPath = fakerMap[methodString];
+  if (fakerMethodPath) {
+    [category, method] = fakerMethodPath.split('.');
+    if (faker[category] && faker[category][method]) return faker[category][method];
   }
-};
+  return () => `[Invalid Method: ${methodString}]`;
+}
+const getNewId = getFakerMethod(identifierType, FAKER_MAP);
+
+// --- NEW: Build a lookup map for POST routes ---
+const createRouteMap = new Map();
+(userConfig.collections || userConfig.tables || []).forEach(target => {
+  if (target.createEndpoint) {
+    createRouteMap.set(target.createEndpoint, true);
+  }
+});
+
 
 // -----------------------------------------------------------------
-// STEP 1: THE INTERCEPTOR MIDDLEWARE (Updated)
+// NEW: PRE-SAVE SIGNER MIDDLEWARE
 // -----------------------------------------------------------------
-const decoyInterceptor = (req, res, next) => {
-  const bypassHeader = req.headers['x-admin-bypass'];
-  if (ADMIN_BYPASS_KEY && bypassHeader === ADMIN_BYPASS_KEY) {
+const preSaveSigner = (req, res, next) => {
+  // Only run on POST requests that are in our map
+  if (req.method !== 'POST' || !createRouteMap.has(req.originalUrl)) {
     return next();
   }
 
+  // Check for admin bypass. Admins can't create data?
+  // Or maybe we still sign it. Let's sign it.
+  
+  const body = req.body;
+  if (!body) {
+    return next(); // Nothing to sign
+  }
+
+  console.log(`[SIGNER]: Detected new data for ${req.originalUrl}. Signing with REAL_KEY...`);
+  
+  try {
+    // Generate the new ID and HMAC code
+    const newId = getNewId();
+    const newHash = createHmac(newId, REAL_KEY);
+
+    // --- THIS IS THE CORE LOGIC ---
+    // Inject our fields into the request body
+    req.body[identifierField] = newId;
+    req.body[hmacField] = newHash;
+    // ---------------------------------
+
+  } catch (err) {
+    console.error(`[SIGNER]: Error signing new record: ${err.message}`);
+    // Don't block the request, just log it
+  }
+
+  next(); // Pass the *modified* body to the real controller
+};
+// --- Apply the new middleware ---
+app.use(preSaveSigner);
+
+
+
+// -----------------------------------------------------------------
+// STEP 1 & 2: COMBINED, SYNCHRONOUS INTERCEPTOR (Updated)
+// -----------------------------------------------------------------
+const checkData = async (data, requestInfo) => {
+  try {
+    const records = Array.isArray(data) ? data : [data];
+    if (records.length === 0) return;
+
+    for (const record of records) {
+      if (record && record[identifierField] && record[hmacField]) {
+        const uniqueId = record[identifierField];
+        const dataCode = record[hmacField];
+
+        // Check if it's a DECOY
+        const decoyHash = createHmac(uniqueId, DECOY_KEY);
+        if (decoyHash === dataCode) {
+          // BREACH! This is a decoy.
+          breachProtocol.triggerAlert(requestInfo, data, 'high');
+          return; // Stop checking
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[CHECKER]: Error in async check:', e.message);
+  }
+};
+
+
+// -----------------------------------------------------------------
+// THE INTERCEPTOR (Updated with new Sync/Async logic)
+// -----------------------------------------------------------------
+const decoyInterceptor = (req, res, next) => {
   const originalSend = res.send.bind(res);
+  const requestInfo = { ip: req.ip, url: req.originalUrl, method: req.method };
+  const bypassHeader = req.headers['x-admin-bypass'];
 
   res.send = (body) => {
-    // --- HEURISTIC CHECK (Updated) ---
+    // --- 1. HEURISTIC CHECK (Synchronous) ---
+    // This check runs for EVERYONE (except admins who bypass)
     if (body && body.length > MAX_DATA_BYTES) {
-      console.warn(`[HEURISTIC]: Large data request detected from IP: ${req.ip}.`);
-      
-      const requestInfo = { ip: req.ip, url: req.originalUrl, method: req.method };
-      breachProtocol.triggerAlert(requestInfo, null); 
-      
-      // Call the new honeypot function
-      sendHoneypot(req, res, req.ip, "Large data request");
-      return; // Stop here!
+      if (ADMIN_BYPASS_KEY && bypassHeader === ADMIN_BYPASS_KEY) {
+        // This is an Admin, just log it as low threat
+        breachProtocol.triggerAlert(requestInfo, null, 'low');
+        // Let it pass through to the admin synchronous filter
+      } else {
+        // This is an Attacker, block them.
+        breachProtocol.triggerAlert(requestInfo, null, 'high');
+        sendHoneypot(req, res, req.ip, "Large data request", originalSend);
+        return;
+      }
     }
-    // --- END HEURISTIC CHECK ---
 
+    // --- 2. ADMIN BYPASS (Synchronous Filter) ---
+    if (ADMIN_BYPASS_KEY && bypassHeader === ADMIN_BYPASS_KEY) {
+      console.log(`[ADMIN]: Admin request detected. Filtering decoys...`);
+      try {
+        const data = JSON.parse(body);
+        const cleanData = []; // A new array for *only* real data
+        const records = Array.isArray(data) ? data : [data];
+
+        for (const record of records) {
+          if (record && record[identifierField] && record[hmacField]) {
+            const uniqueId = record[identifierField];
+            const dataCode = record[hmacField];
+
+            // Check if it's REAL data
+            const realHash = createHmac(uniqueId, REAL_KEY);
+            if (realHash === dataCode) {
+              cleanData.push(record); // It's real, add it
+            }
+            // If it's a decoy, we simply... do nothing. It's filtered out.
+          }
+        }
+        // Send the filtered list to the admin
+        originalSend(JSON.stringify(cleanData));
+      } catch (e) {
+        originalSend(body); // Not JSON
+      }
+      return; // Stop here.
+    }
+
+    // --- 3. NORMAL USER / ATTACKER (Asynchronous Check) ---
+    // If not an admin, send the data immediately for low latency
     originalSend(body);
-    
+
+    // And check the data in the background
     try {
-      const requestInfo = { ip: req.ip, url: req.originalUrl, method: req.method };
       const data = JSON.parse(body);
-      checkData(data, requestInfo); // Async HMAC check
-    } catch (e) { /* Not JSON, skip */ }
+      checkData(data, requestInfo); // Fire-and-forget
+    } catch (e) {
+      // Not JSON, skip
+    }
   };
 
   next();
@@ -190,6 +312,25 @@ app.get('/api/:target', async (req, res) => {
   } catch (err) {
     console.error(`[APP]: Error fetching data for target "${targetName}":`, err.message);
     res.status(500).json({ error: "Failed to fetch data." });
+  }
+});
+
+// --- NEW: Add a POST route for testing ---
+// This mocks the user's *real* API endpoint
+app.post('/api/:target', async (req, res) => {
+  const targetName = req.params.target;
+  const newData = req.body; // This body *already has* our signed fields
+
+  console.log(`[APP]: Received new data for ${targetName}.`);
+  
+  try {
+    // We'll just log it. A real app would save it.
+    // await adapter.insert(targetName, [newData]); // <-- This would save it
+    console.log('[APP]: Data that would be saved (note the new fields):');
+    console.log(newData);
+    res.status(201).json({ success: true, data: newData });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to save data." });
   }
 });
 

@@ -5,6 +5,7 @@
   "collections": [
     {
       "name": "employees",
+      "createEndpoint": "/api/employees",
       "fields": {
         "firstName": "person.firstName",
         "lastName": "person.lastName",
@@ -15,6 +16,7 @@
     },
     {
       "name": "products",
+      "createEndpoint": "/api/products",
       "fields": {
         "productName": "commerce.productName",
         "category": "commerce.department",
