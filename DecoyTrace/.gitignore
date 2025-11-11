@@ -25,3 +25,13 @@ Thumbs.db
 .vscode/
 # JetBrains (WebStorm, etc.)
 .idea/
+
+# Python testing and linting cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local virtual environments
+.venv/
+venv/
+ENV/
